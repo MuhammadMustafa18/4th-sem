@@ -1,0 +1,9 @@
+pthread_create(&t, NULL, read_func, (void*)&RI);
+// for structs we have to &RI, for primitives ie int we dont
+
+// struct readerInfo ri = (struct readerInfo)args;
+struct readerInfo *ri = (struct readerInfo*)args;
+
+// char* booknames[];
+char** booknames;
+int books;
