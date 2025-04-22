@@ -6,10 +6,8 @@ access coordination policies, thread-safe metadata updates, and deadlock scenari
 digital library systems and concurrent database operations.
 
 Readers can read together ✅
-
 Only one writer at a time ✅
-
 No reader can read while a writer is writing ❌
-
 No writer can write while readers are reading ❌
+
 ![alt text](image.png)
