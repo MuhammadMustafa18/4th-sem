@@ -1,1 +1,4 @@
 os ali 1 B
+os ds 1 B
+os ali 8 B
+gs aqib 3 B

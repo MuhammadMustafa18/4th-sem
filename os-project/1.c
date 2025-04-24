@@ -4,208 +4,328 @@
 #include <string.h>
 #include <errno.h>
 #include <semaphore.h>
-#include <unistd.h> // For sleep()
+#include <unistd.h>
 #include <time.h>
 
+// Synchronization primitives
 sem_t ww_mutex;
 pthread_mutex_t rw_mutex;
 sem_t r_mutex;
+sem_t rr_mutex;
 int readerCount = 0;
-struct readerInfo
+
+// Data structures
+typedef struct
 {
     pthread_t tid;
     char readerName[100];
-    char** booknames;
+    char **booknames;
     int totalbooksborrowed;
-};
-struct bookInfo
+} ReaderInfo;
+
+typedef struct
 {
-    // meta data 
     char bookName[100];
     char bookAuthor[100];
     int bookPages;
-    char* borrowed;
-};
+    char borrowed[3]; // "NB" or "B"
+} BookInfo;
 
-void *read_func(void *args)
-{
-    pthread_mutex_lock(&rw_mutex); 
-    // kisi aik ne bhi lock kardiya to write nahi hoga, but again agar kisi aik ne bhi unlock krdiya to hojayega, isliye we need counts
-    int maxWait = 10;
-    int actualWait = rand() % maxWait + 1;
-    // before the request is catered, each reader has to wait
-    sleep(actualWait);
-
-    struct readerInfo *ri = (struct readerInfo *)args;
-    char **booksArray = ri->booknames;
-    int totalbooks = ri->totalbooksborrowed;
-
-    for (int i = 0; i < totalbooks; i++)
-    {
-        printf("NOTIFICATION:Reader %s requested the borrow of: %s.... \n", ri->readerName, booksArray[i]);
-        // check if the book is available
-        sem_wait(&r_mutex); // file is shared between readers, can allow concurrent access as multiple readers cannot borrow the same book
-        FILE *fr = fopen("Books.txt","r");
-        FILE *temp = fopen("Temp.txt","w");
-        if(!fr){
-            perror("Error opening file for read\n");
-            break;
-        }
-        char line[256];
-        int foundFlag = 0;
-        while(fgets(line, sizeof(line), fr)){
-            // fgets remembers where it left off
-            line[strcspn(line, "\n")] = '\0'; 
-            char* bookname = strtok(line, " "); // starts at start of line and cuts at the delimiter
-            char* authorname = strtok(NULL, " "); // null tells it to remember where it left off, continues from there
-            char *pages = strtok(NULL, " ");   
-            char *borrowed = strtok(NULL, " ");
-            if (strcmp(bookname, ri->booknames[i]) == 0 && (strcmp(borrowed, "NB") == 0 || strcmp(borrowed, "nb") == 0))
-            {
-                // found
-                foundFlag = 1;
-                printf("NOTIFICATION: Reader %s borrowed the book: %s\n", ri->readerName, booksArray[i]);
-                fprintf(temp, "%s %s %s B\n", bookname, authorname, pages, borrowed);
-                break; // inner loop
-            }
-            else
-            {
-                fprintf(temp, "%s %s %s %s\n", bookname, authorname, pages, borrowed);
-            }
-        }
-        if(!foundFlag){
-            printf("The book: %s is either borrowed or not available\n", booksArray[i]);
-        }
-        fclose(fr);
-        fclose(temp);
-        remove("Books.txt");
-        rename("Temp.txt", "Books.txt");
-        sem_post(&r_mutex);
-    }
-    // read completed ke baad decrease bhi phir aik hi karay
-    // during that time all readers paused - ig
-
-    pthread_mutex_unlock(&rw_mutex);
-}
-void *write_func(void *args)
-{
-    sem_wait(&ww_mutex);
-    pthread_mutex_lock(&rw_mutex);
-    
-    sleep(3);
-    struct bookInfo *BI = (struct bookInfo *)args;
-    FILE *fp = fopen("Books.txt","a");
-    if(!fp){
-        printf("Error opening the database for writing");
-        return NULL; // null allowed
-    }
-    
-    
-    fprintf(fp,"%s %s %d %s\n", BI->bookName, BI->bookAuthor, BI->bookPages, BI->borrowed);
-    printf("NOTIFICATION: Writing the book : %s.... \n", BI->bookName);
-    sleep(3);
-    // so issue because of writing input and overall input so, as soon as write is chosed lock must be put on reading and vice versa
-    fclose(fp);
-
-    pthread_mutex_unlock(&rw_mutex);
-    sem_post(&ww_mutex);
-}
+void *read_func(void *args);
+void *write_func(void *args);
+void cleanup_reader(ReaderInfo *ri);
 
 int main()
 {
-    // initialize mutex here
-    srand(time(0)); // seed the random nmber generator on current time
-    pthread_mutex_init(&rw_mutex, NULL); // used for r-w conflicts
-    
-    sem_init(&r_mutex, 0, 1); // used for within r-r conflicts
-    sem_init(&ww_mutex, 0, 1); // used for w-w conflicts
+    srand(time(0));
+    pthread_mutex_init(&rw_mutex, NULL);
+    sem_init(&rr_mutex, 0, 1);
+    sem_init(&r_mutex, 0, 1);
+    sem_init(&ww_mutex, 0, 1);
+
     while (1)
     {
+        printf("\n========= LIBRARY MENU =========\n");
+        printf("1. Borrow books as a reader\n");
+        printf("2. Add a new book to library\n");
+        printf("3. Exit the system\n");
+        printf("================================\n");
+        printf("Please enter your choice (1-3): ");
+
         int choice;
-        printf("LIBRARY DASHBOARD\n");
-        printf("1. Reader request\n");
-        printf("2. Add a book\n");
-        printf("3. Terminate session\n");
-        printf("Choice 1/2/3?: \n");
-        scanf("%d", &choice);
-        switch(choice){
-            case 1:{
-                printf("Reading\n");
-                // printf("...\n");
-                pthread_t t;
-                struct readerInfo RI;
-                RI.tid = t;
-                char** booksArray;
-                int numbooks = 0;
-                char readerName[100];
-                printf("Enter your name: ");
-                scanf("%s", readerName);
-                // RI.readerName = readerName; // this wrong In C, you cannot assign to an array like that — arrays are not assignable.
-                strcpy(RI.readerName, readerName);
-                while(1){
-                    char* bookname = (char*)malloc(100*sizeof(char));
-                    printf("Enter the book name you want to borrow (e to exit): ");
-                    scanf("%s", bookname);
-                    if(strcmp(bookname,"e") == 0){
-                        free(bookname);
-                        break;
-                    }
-                    numbooks++;
-                    // 0 -> 1
-                    char **tempbooks = (char **)realloc(booksArray, (numbooks) * sizeof(char *));
+        char input[100];
+        if (fgets(input, sizeof(input), stdin) == NULL)
+        {
+            perror("Input error");
+            continue;
+        }
 
-                    if(!tempbooks){
-                        printf("Memory allocation for books failed\n");
-                        free(bookname);
-                        break;
-                    }
-                    booksArray = tempbooks; // assign - rename
-                    booksArray[numbooks - 1] = bookname;
+        if (sscanf(input, "%d", &choice) != 1)
+        {
 
-                    // so no need to deallocate temp as it only added an extra block and gave to books, rather than an entire temp array
-                    // deallocate books array when done, reallocate didnt do it in 2 steps
+            printf("Invalid input. Please enter 1, 2, or 3.\n");
+            continue;
+        }
+
+        switch (choice)
+        {
+        case 1:
+        {
+            ReaderInfo *ri = malloc(sizeof(ReaderInfo));
+            // pointer to pointer 4-8 bytes(booknames)
+            if (!ri)
+            {
+                perror("Failed to allocate reader info");
+                break;
+            }
+
+            printf("Enter your name: ");
+            if (fgets(ri->readerName, sizeof(ri->readerName), stdin) == NULL)
+            {
+                // any error while reading = null
+                free(ri);
+                break;
+            }
+            ri->readerName[strcspn(ri->readerName, "\n")] = '\0'; // Remove newline
+
+            ri->booknames = NULL;
+            ri->totalbooksborrowed = 0;
+
+            while (1)
+            {
+                printf("Enter the book name you want to borrow (e to exit): ");
+                char bookname[100];
+                if (fgets(bookname, sizeof(bookname), stdin) == NULL)
+                {
+                    break;
                 }
-                RI.booknames = booksArray;
-                RI.totalbooksborrowed = numbooks;
-                pthread_create(&t, NULL, read_func, (void*)&RI);
-                
+                bookname[strcspn(bookname, "\n")] = '\0'; 
+
+                if (strcmp(bookname, "e") == 0)
+                {
+                    break;
+                }
+                // yahan realloc
+                char **temp = realloc(ri->booknames, (ri->totalbooksborrowed + 1) * sizeof(char *));
+                if (!temp)
+                {
+                    perror("Failed to allocate book list");
+                    cleanup_reader(ri);
+                    break;
+                }
+                // yahan actual assign to that new block
+                ri->booknames = temp;
+                ri->booknames[ri->totalbooksborrowed] = strdup(bookname);
+                // ri->booknames[ri->totalbooksborrowed] = bookname;
+                // where bookname is the dynamic string, and that also a dynamically allocated - so what issue?
+                // each element holds pointer to char*
+                // char* points to a string in memory, = pe pointer is copied, so 2 pointers same memory
+                // dup solves this
+                if (!ri->booknames[ri->totalbooksborrowed])
+                {
+                    perror("Failed to duplicate book name");
+                    cleanup_reader(ri);
+                    break;
+                }
+                ri->totalbooksborrowed++;
+            }
+
+            if (ri->totalbooksborrowed > 0)
+            {
+                pthread_t tid;
+                if (pthread_create(&tid, NULL, read_func, ri) != 0)
+                {
+                    perror("Failed to create reader thread");
+                    cleanup_reader(ri);
+                }
+                else
+                {
+                    // Detach thread so when it is done - memory is cleaned
+                    // when we create, os keeps the resources allocated till joined
+                    // if not joined then zombie thread - never freed
+                    pthread_detach(tid);
+                }
+            }
+            else
+            {
+                free(ri);
+            }
+            break;
+        }
+        case 2:
+        {
+            BookInfo bi; // no dynamic inner structure - but only the array reallocates right?
+            // basically (stack) is shared between threads - here this bi is in stack rn and if this goes to the new thread in stack and if main ends before, since it is in the main's stack then probelms
+
+            // but luckily for us this doesnt get passed - it does actually but because of join main wont end until it done hence no issues
+            // we could've done detach, heap copy banegi(manually using malloc) of data in stack 
+            printf("Enter book name, author name and pages (space separated): ");
+            char input[256];
+            if (fgets(input, sizeof(input), stdin) == NULL)
+            {
+                printf("Input error\n");
                 break;
             }
-            case 2:{
-                
-                printf("Writing\n");
-                char bookName[100];
-                char authorName[100];
-                int pages;
-                printf("Enter book name, author name and pages (space seperated): ");
-                scanf("%s %s %d", bookName, authorName, &pages);
-                // printf("Enter author name: ");
-                // scanf("%s", authorName);
-                // printf("Enter book pages: ");
-                // scanf("%d", &pages);
-                
-                struct bookInfo BI;
-                strcpy(BI.bookName, bookName);
-                strcpy(BI.bookAuthor, authorName);
-                BI.bookPages = pages;
-                strcpy(BI.borrowed,"NB");
 
-                pthread_t t; // redeclared in a different case
-
-                pthread_create(&t, NULL, write_func,(void*)&BI);
-                pthread_join(t, NULL);
+            if (sscanf(input, "%99s %99s %d", bi.bookName, bi.bookAuthor, &bi.bookPages) != 3)
+            {
+                printf("Invalid input format\n");
                 break;
             }
-            case 3:
-                printf("Terminating\n");
-                exit(0);
-            default:
-                printf("Incorrect inputs\n");
-                exit(0);
+            strncpy(bi.borrowed, "NB", sizeof(bi.borrowed)); //defines kitne copy krne hain, if source larger it will handle
+
+            pthread_t tid;
+            if (pthread_create(&tid, NULL, write_func, &bi) != 0) 
+            {
+                perror("Failed to create writer thread");
             }
+            else
+            {
+                pthread_join(tid, NULL); // Wait for write to complete
+            }
+            break;
+        }
+        case 3:
+            printf("Terminating...\n");
+            pthread_mutex_destroy(&rw_mutex); // have resources allocated so freeing needed
+            sem_destroy(&rr_mutex);
+            sem_destroy(&r_mutex);
+            sem_destroy(&ww_mutex);
+            exit(0);
+        default:
+            printf("Invalid choice. Please enter 1, 2, or 3.\n");
+        }
     }
-    pthread_mutex_destroy(&rw_mutex);
-    sem_destroy(&r_mutex);
-    sem_destroy(&ww_mutex);
-    // mechanism for main to end without terminating others
+    return 0;
+}
+
+void *read_func(void *args)
+{
+    ReaderInfo *ri = (ReaderInfo *)args;
+
+    // Enter critical section for reader count
+    sem_wait(&rr_mutex);
+    readerCount++;
+    if (readerCount == 1)
+    {
+        pthread_mutex_lock(&rw_mutex); // First reader locks writers out
+    }
+    sem_post(&rr_mutex);
+
+    // Simulate processing delay
+    usleep(rand() % 100000); // 0-100ms
+
+    for (int i = 0; i < ri->totalbooksborrowed; i++)
+    {
+        sem_wait(&r_mutex); // Protect file access between readers
+
+        FILE *fr = fopen("Books.txt", "r");
+        FILE *temp = fopen("Temp.txt", "w");
+        if (!fr || !temp)
+        {
+            perror("Failed to open files");
+            sem_post(&r_mutex);
+            continue;
+        }
+
+        char line[256];
+        int foundFlag = 0;
+        while (fgets(line, sizeof(line), fr))
+        {
+            line[strcspn(line, "\n")] = '\0';
+
+            char *tokens[4];
+            char *token = strtok(line, " ");
+            for (int j = 0; j < 4 && token != NULL; j++)
+            {
+                tokens[j] = token;
+                token = strtok(NULL, " ");
+            }
+
+            if (tokens[0] && tokens[3] &&
+                strcmp(tokens[0], ri->booknames[i]) == 0 &&
+                (strcasecmp(tokens[3], "NB") == 0))
+            {
+
+                foundFlag = 1;
+                printf("\n[REQUEST] Reader %s requested: %s\n", ri->readerName, ri->booknames[i]);
+                printf("[BORROWED] Reader %s successfully borrowed: %s\n", ri->readerName, ri->booknames[i]);
+                fprintf(temp, "%s %s %s B\n", tokens[0], tokens[1], tokens[2]);
+            }
+            else if (tokens[0] && tokens[3])
+            {
+                fprintf(temp, "%s %s %s %s\n", tokens[0], tokens[1], tokens[2], tokens[3]);
+            }
+        }
+
+        fclose(fr);
+        fclose(temp);
+
+        if (foundFlag)
+        {
+            remove("Books.txt");
+            rename("Temp.txt", "Books.txt");
+        }
+        else
+        {
+            remove("Temp.txt");
+            printf("[UNAVAILABLE] Book '%s' is either borrowed or does not exist.\n", ri->booknames[i]);
+        }
+
+        sem_post(&r_mutex);
+    }
+
+    // Exit critical section for reader count
+    sem_wait(&rr_mutex);
+    readerCount--;
+    if (readerCount == 0)
+    {
+        pthread_mutex_unlock(&rw_mutex); // Last reader releases writers
+    }
+    sem_post(&rr_mutex);
+
+    cleanup_reader(ri);
+    return NULL;
+}
+
+void *write_func(void *args)
+{
+    BookInfo *bi = (BookInfo *)args;
+
+    sem_wait(&ww_mutex);
+    pthread_mutex_lock(&rw_mutex);
+
+    // Simulate processing delay
+    usleep(300000); // 300ms
+
+    FILE *fp = fopen("Books.txt", "a");
+    if (!fp)
+    {
+        perror("Failed to open books file");
+    }
+    else
+    {
+        fprintf(fp, "%s %s %d %s\n", bi->bookName, bi->bookAuthor, bi->bookPages, bi->borrowed);
+        printf("\n[ADDED] Book '%s' by %s (%d pages) successfully added to the library.\n",
+               bi->bookName, bi->bookAuthor, bi->bookPages);
+        fclose(fp);
+    }
+
+    pthread_mutex_unlock(&rw_mutex);
+    sem_post(&ww_mutex);
+
+    return NULL;
+}
+
+void cleanup_reader(ReaderInfo *ri)
+{
+    if (ri)
+    {
+        for (int i = 0; i < ri->totalbooksborrowed; i++)
+        {
+            free(ri->booknames[i]);
+        }
+        free(ri->booknames);
+        free(ri);
+    }
 }
