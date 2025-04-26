@@ -1,0 +1,1 @@
+sem_wait(&empty); // checks if empty > 0 if yes then produces
