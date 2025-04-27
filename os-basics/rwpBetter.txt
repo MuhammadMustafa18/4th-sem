@@ -1,0 +1,3 @@
+if even a single reader thread comes, writer is blocked
+writer could starve if these readers keep coming
+so a more balanced version makes sure if writers are waiting then it wont allow new readers
