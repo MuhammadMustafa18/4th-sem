@@ -61,10 +61,10 @@ int main()
     sem_init(&r_mutex, 0, 1);
     sem_init(&ww_mutex, 0, 1);
     welcomeScreen();
-    // system("cls");
-    system("color F4");
     while (1)
     {
+        // system("cls");
+        // system("color F4");
         printf("\n========= LIBRARY MENU =========\n");
         printf("1. Borrow books as a reader\n");
         printf("2. Add a new book to library\n");
@@ -233,7 +233,7 @@ void *read_func(void *args)
     sem_post(&rr_mutex);
 
     // Simulate processing delay
-    sleep(10); // 0-100ms
+    sleep(rand() % 10); // 0-100ms
 
     for (int i = 0; i < ri->totalbooksborrowed; i++)
     {
@@ -316,7 +316,7 @@ void *write_func(void *args)
     pthread_mutex_lock(&rw_mutex);
 
     // Simulate processing delay
-    sleep(10); // 300ms
+    sleep(rand()%10); // 300ms
 
     FILE *fp = fopen("Books.txt", "a");
     if (!fp)
